@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IPTV Player</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <!-- M3U URL Input -->
+            <div class="url-section">
+                <input type="text" id="m3uUrl" placeholder="M3U URL girin...">
+                <button id="loadBtn">Yukle</button>
+            </div>
+
+            <!-- Search -->
+            <div class="search-section">
+                <input type="text" id="searchInput" placeholder="Kanal ara...">
+            </div>
+
+            <!-- Categories -->
+            <div class="categories" id="categories">
+                <div class="category-item active" data-category="all">
+                    <span class="category-icon">📺</span>
+                    <span class="category-name">Tum Kanallar</span>
+                    <span class="category-count" id="allCount">0</span>
+                </div>
+                <div class="category-item" data-category="favorites">
+                    <span class="category-icon">⭐</span>
+                    <span class="category-name">Favoriler</span>
+                    <span class="category-count" id="favCount">0</span>
+                </div>
+                <div class="category-divider"></div>
+                <div id="categoryList"></div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Video Player -->
+            <div class="player-section">
+                <div class="player-container" id="playerContainer">
+                    <video id="videoPlayer" controls></video>
+                    <div class="player-overlay" id="playerOverlay">
+                        <div class="play-icon">▶</div>
+                        <p>Kanal secin</p>
+                    </div>
+                </div>
+                <div class="now-playing" id="nowPlaying">
+                    <span class="channel-logo" id="currentLogo"></span>
+                    <span class="channel-title" id="currentTitle">Kanal seciniz</span>
+                    <button class="fav-btn" id="favBtn" title="Favorilere Ekle">☆</button>
+                </div>
+            </div>
+
+            <!-- Channel List -->
+            <div class="channels-section">
+                <div class="channels-header">
+                    <h3 id="channelsTitle">Kanallar</h3>
+                    <span class="channel-count" id="channelCount">0 kanal</span>
+                </div>
+                <div class="channels-list" id="channelsList">
+                    <div class="empty-state">
+                        <p>M3U URL yukleyin veya kanal arayın</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="main.js"></script>
+</body>
+</html>
