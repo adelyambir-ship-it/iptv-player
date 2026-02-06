@@ -126,22 +126,24 @@ fn parse_m3u(content: &str) -> Vec<Channel> {
     channels
 }
 
-// Search subtitles from OpenSubtitles
+// Search subtitles from Subdl (free API)
 #[tauri::command]
 async fn search_subtitles(query: String) -> Result<Vec<Subtitle>, String> {
     println!("Searching subtitles for: {}", query);
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+        .build()
+        .map_err(|e| format!("Client error: {}", e))?;
 
-    // Use OpenSubtitles API
+    // Use Subdl API
+    let url = format!(
+        "https://api.subdl.com/api/v1/subtitles?film_name={}&languages=tr",
+        urlencoding::encode(&query)
+    );
+
     let response = client
-        .get("https://api.opensubtitles.com/api/v1/subtitles")
-        .header("Api-Key", "bnQIdGiVnMRVwG7d0YFgIHnCdAt3QXHD")
-        .header("User-Agent", "IPTV Player v1.0")
-        .query(&[
-            ("query", query.as_str()),
-            ("languages", "tr"),
-        ])
+        .get(&url)
         .send()
         .await
         .map_err(|e| format!("Search failed: {}", e))?;
@@ -150,19 +152,34 @@ async fn search_subtitles(query: String) -> Result<Vec<Subtitle>, String> {
         return Err(format!("API error: {}", response.status()));
     }
 
-    let data: OpenSubtitlesResponse = response.json().await
+    #[derive(Deserialize)]
+    struct SubdlResponse {
+        subtitles: Option<Vec<SubdlItem>>,
+    }
+
+    #[derive(Deserialize)]
+    struct SubdlItem {
+        release_name: Option<String>,
+        url: Option<String>,
+        language: Option<String>,
+    }
+
+    let data: SubdlResponse = response.json().await
         .map_err(|e| format!("Parse error: {}", e))?;
 
-    let subtitles: Vec<Subtitle> = data.data.iter().take(10).map(|item| {
-        Subtitle {
-            id: item.attributes.files.first()
-                .map(|f| f.file_id.to_string())
-                .unwrap_or_default(),
-            language: item.attributes.language.clone(),
-            release_name: item.attributes.release.clone().unwrap_or_else(|| "Unknown".to_string()),
-            download_url: format!("https://api.opensubtitles.com/api/v1/download"),
-        }
-    }).collect();
+    let subtitles: Vec<Subtitle> = data.subtitles
+        .unwrap_or_default()
+        .iter()
+        .take(10)
+        .filter_map(|item| {
+            Some(Subtitle {
+                id: item.url.clone()?,
+                language: item.language.clone().unwrap_or_else(|| "tr".to_string()),
+                release_name: item.release_name.clone().unwrap_or_else(|| "Unknown".to_string()),
+                download_url: item.url.clone()?,
+            })
+        })
+        .collect();
 
     println!("Found {} subtitles", subtitles.len());
     Ok(subtitles)
@@ -171,41 +188,59 @@ async fn search_subtitles(query: String) -> Result<Vec<Subtitle>, String> {
 // Download subtitle file
 #[tauri::command]
 async fn download_subtitle(file_id: String) -> Result<String, String> {
-    println!("Downloading subtitle: {}", file_id);
+    println!("Downloading subtitle from: {}", file_id);
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
+        .build()
+        .map_err(|e| format!("Client error: {}", e))?;
 
-    // Request download link
+    // file_id is the direct URL for Subdl
+    let download_url = if file_id.starts_with("http") {
+        file_id
+    } else {
+        format!("https://dl.subdl.com{}", file_id)
+    };
+
     let response = client
-        .post("https://api.opensubtitles.com/api/v1/download")
-        .header("Api-Key", "bnQIdGiVnMRVwG7d0YFgIHnCdAt3QXHD")
-        .header("User-Agent", "IPTV Player v1.0")
-        .header("Content-Type", "application/json")
-        .body(format!(r#"{{"file_id": {}}}"#, file_id))
+        .get(&download_url)
         .send()
         .await
-        .map_err(|e| format!("Download request failed: {}", e))?;
+        .map_err(|e| format!("Download failed: {}", e))?;
 
-    #[derive(Deserialize)]
-    struct DownloadResponse {
-        link: String,
-    }
-
-    let download_info: DownloadResponse = response.json().await
-        .map_err(|e| format!("Parse error: {}", e))?;
-
-    // Download actual subtitle file
-    let subtitle_content = client
-        .get(&download_info.link)
-        .send()
-        .await
-        .map_err(|e| format!("Subtitle download failed: {}", e))?
-        .text()
-        .await
+    // Subdl returns a ZIP file, we need to extract the SRT
+    let bytes = response.bytes().await
         .map_err(|e| format!("Read failed: {}", e))?;
+
+    // Try to extract SRT from ZIP
+    let subtitle_content = extract_srt_from_zip(&bytes)
+        .unwrap_or_else(|_| String::from_utf8_lossy(&bytes).to_string());
 
     println!("Downloaded {} bytes", subtitle_content.len());
     Ok(subtitle_content)
+}
+
+fn extract_srt_from_zip(data: &[u8]) -> Result<String, String> {
+    use std::io::{Read, Cursor};
+
+    let reader = Cursor::new(data);
+    let mut archive = zip::ZipArchive::new(reader)
+        .map_err(|e| format!("ZIP error: {}", e))?;
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)
+            .map_err(|e| format!("ZIP file error: {}", e))?;
+
+        let name = file.name().to_lowercase();
+        if name.ends_with(".srt") {
+            let mut content = String::new();
+            file.read_to_string(&mut content)
+                .map_err(|e| format!("Read error: {}", e))?;
+            return Ok(content);
+        }
+    }
+
+    Err("No SRT file found in ZIP".to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
