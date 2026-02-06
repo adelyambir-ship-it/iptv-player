@@ -48,10 +48,12 @@
                         <div class="play-icon">▶</div>
                         <p>Kanal secin</p>
                     </div>
+                    <div class="subtitle-display" id="subtitleDisplay"></div>
                 </div>
                 <div class="now-playing" id="nowPlaying">
                     <span class="channel-logo" id="currentLogo"></span>
                     <span class="channel-title" id="currentTitle">Kanal seciniz</span>
+                    <button class="sub-btn" id="subBtn" title="Altyazi Ara">CC</button>
                     <button class="fav-btn" id="favBtn" title="Favorilere Ekle">☆</button>
                 </div>
             </div>
@@ -69,6 +71,25 @@
                 </div>
             </div>
         </main>
+    </div>
+
+    <!-- Subtitle Modal -->
+    <div class="modal" id="subtitleModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Altyazi Ara</h3>
+                <button class="modal-close" id="closeSubModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="sub-search">
+                    <input type="text" id="subSearchInput" placeholder="Film/dizi adi...">
+                    <button id="subSearchBtn">Ara</button>
+                </div>
+                <div class="sub-results" id="subResults">
+                    <p class="sub-hint">Film veya dizi adini yazin ve arayin</p>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>

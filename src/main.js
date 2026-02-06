@@ -387,3 +387,148 @@ function escapeHtml(str) {
               .replace(/>/g, '&gt;')
               .replace(/"/g, '&quot;');
 }
+
+// =====================
+// SUBTITLE FUNCTIONALITY
+// =====================
+
+let subtitles = []; // Parsed subtitles
+let subtitleTimeout = null;
+
+// Initialize subtitle UI
+document.addEventListener('DOMContentLoaded', () => {
+    const subBtn = document.getElementById('subBtn');
+    const subtitleModal = document.getElementById('subtitleModal');
+    const closeSubModal = document.getElementById('closeSubModal');
+    const subSearchInput = document.getElementById('subSearchInput');
+    const subSearchBtn = document.getElementById('subSearchBtn');
+    const subResults = document.getElementById('subResults');
+    const subtitleDisplay = document.getElementById('subtitleDisplay');
+
+    // Open subtitle modal
+    subBtn.addEventListener('click', () => {
+        subtitleModal.classList.add('open');
+        subSearchInput.focus();
+        // Pre-fill with current channel name
+        if (currentChannel) {
+            subSearchInput.value = currentChannel.name.replace(/HD|FHD|4K|SD/gi, '').trim();
+        }
+    });
+
+    // Close modal
+    closeSubModal.addEventListener('click', () => {
+        subtitleModal.classList.remove('open');
+    });
+
+    subtitleModal.addEventListener('click', (e) => {
+        if (e.target === subtitleModal) {
+            subtitleModal.classList.remove('open');
+        }
+    });
+
+    // Search subtitles
+    subSearchBtn.addEventListener('click', searchSubtitles);
+    subSearchInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') searchSubtitles();
+    });
+
+    async function searchSubtitles() {
+        const query = subSearchInput.value.trim();
+        if (!query) return;
+
+        subResults.innerHTML = '<div class="loading">Altyazi araniyor...</div>';
+
+        try {
+            const invoke = window.__TAURI__?.core?.invoke;
+            const results = await invoke('search_subtitles', { query });
+
+            if (results.length === 0) {
+                subResults.innerHTML = '<p class="sub-hint">Altyazi bulunamadi</p>';
+                return;
+            }
+
+            subResults.innerHTML = results.map(sub => `
+                <div class="sub-item" data-id="${sub.id}">
+                    <div class="sub-item-title">${escapeHtml(sub.release_name)}</div>
+                    <div class="sub-item-lang">Turkce</div>
+                </div>
+            `).join('');
+
+            // Add click handlers
+            subResults.querySelectorAll('.sub-item').forEach(item => {
+                item.addEventListener('click', () => loadSubtitle(item.dataset.id));
+            });
+        } catch (err) {
+            console.error('Subtitle search error:', err);
+            subResults.innerHTML = `<p class="sub-hint">Hata: ${err}</p>`;
+        }
+    }
+
+    async function loadSubtitle(fileId) {
+        subResults.innerHTML = '<div class="loading">Altyazi yukleniyor...</div>';
+
+        try {
+            const invoke = window.__TAURI__?.core?.invoke;
+            const content = await invoke('download_subtitle', { fileId });
+
+            subtitles = parseSRT(content);
+            console.log('Loaded', subtitles.length, 'subtitle cues');
+
+            subtitleModal.classList.remove('open');
+            subBtn.classList.add('active');
+
+            // Start subtitle sync
+            startSubtitleSync();
+        } catch (err) {
+            console.error('Subtitle load error:', err);
+            subResults.innerHTML = `<p class="sub-hint">Hata: ${err}</p>`;
+        }
+    }
+
+    // Parse SRT format
+    function parseSRT(content) {
+        const cues = [];
+        const blocks = content.trim().split(/\n\n+/);
+
+        for (const block of blocks) {
+            const lines = block.split('\n');
+            if (lines.length < 3) continue;
+
+            // Parse time line: 00:01:23,456 --> 00:01:26,789
+            const timeLine = lines[1];
+            const timeMatch = timeLine.match(/(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2}),(\d{3})/);
+
+            if (!timeMatch) continue;
+
+            const start = parseInt(timeMatch[1]) * 3600 + parseInt(timeMatch[2]) * 60 + parseInt(timeMatch[3]) + parseInt(timeMatch[4]) / 1000;
+            const end = parseInt(timeMatch[5]) * 3600 + parseInt(timeMatch[6]) * 60 + parseInt(timeMatch[7]) + parseInt(timeMatch[8]) / 1000;
+
+            const text = lines.slice(2).join('\n').replace(/<[^>]+>/g, ''); // Remove HTML tags
+
+            cues.push({ start, end, text });
+        }
+
+        return cues;
+    }
+
+    // Sync subtitles with video
+    function startSubtitleSync() {
+        const video = document.getElementById('videoPlayer');
+
+        video.addEventListener('timeupdate', updateSubtitle);
+    }
+
+    function updateSubtitle() {
+        const video = document.getElementById('videoPlayer');
+        const time = video.currentTime;
+
+        const cue = subtitles.find(s => time >= s.start && time <= s.end);
+
+        if (cue) {
+            subtitleDisplay.textContent = cue.text;
+            subtitleDisplay.classList.add('visible');
+        } else {
+            subtitleDisplay.classList.remove('visible');
+        }
+    }
+});
