@@ -1,10 +1,8 @@
 use serde::{Serialize, Deserialize};
 use regex::Regex;
 use std::sync::Mutex;
-use std::process::{Child, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager};
-use tauri_plugin_shell::ShellExt;
 
 #[derive(Serialize, Clone)]
 struct Channel {
@@ -29,26 +27,54 @@ async fn fetch_m3u(url: String) -> Result<Vec<Channel>, String> {
     println!("Fetching M3U from: {}", url);
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
+        .timeout(std::time::Duration::from_secs(60))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .redirect(reqwest::redirect::Policy::limited(10))
         .build()
         .map_err(|e| format!("Client error: {}", e))?;
 
+    println!("Sending request...");
+
     let response = client.get(&url)
+        .header("Accept", "*/*")
+        .header("Accept-Encoding", "gzip, deflate")
         .send()
         .await
-        .map_err(|e| format!("Failed to fetch: {}", e))?;
+        .map_err(|e| {
+            println!("Request failed: {}", e);
+            format!("Failed to fetch: {}", e)
+        })?;
 
     println!("Got response, status: {}", response.status());
 
+    if !response.status().is_success() {
+        return Err(format!("HTTP error: {}", response.status()));
+    }
+
+    println!("Reading response body...");
+
     let content = response.text()
         .await
-        .map_err(|e| format!("Failed to read: {}", e))?;
+        .map_err(|e| {
+            println!("Failed to read body: {}", e);
+            format!("Failed to read: {}", e)
+        })?;
 
     println!("Content size: {} bytes", content.len());
 
+    if content.is_empty() {
+        return Err("Empty response received".to_string());
+    }
+
     // Parse M3U
+    println!("Parsing M3U...");
     let channels = parse_m3u(&content);
     println!("Parsed {} channels", channels.len());
+
+    if channels.is_empty() {
+        return Err("No channels found in M3U file".to_string());
+    }
 
     Ok(channels)
 }
@@ -252,9 +278,9 @@ fn get_hls_path() -> PathBuf {
     }
 }
 
-// Start ffmpeg transcoding to HLS using sidecar
+// Start ffmpeg transcoding to HLS
 #[tauri::command]
-async fn start_stream(app: AppHandle, url: String) -> Result<String, String> {
+async fn start_stream(url: String) -> Result<String, String> {
     println!("Starting stream transcoding: {}", url);
 
     // Stop previous ffmpeg first
@@ -282,115 +308,52 @@ async fn start_stream(app: AppHandle, url: String) -> Result<String, String> {
 
     println!("HLS output: {}", playlist_path.display());
 
-    // Try sidecar first, fallback to system ffmpeg
-    let child = match app.shell().sidecar("ffmpeg") {
-        Ok(sidecar) => {
-            println!("Using bundled FFmpeg sidecar");
-            sidecar
-                .args([
-                    "-y",
-                    "-loglevel", "error",
-                    "-fflags", "+genpts+discardcorrupt+nobuffer",
-                    "-flags", "low_delay",
-                    "-reconnect", "1",
-                    "-reconnect_streamed", "1",
-                    "-reconnect_delay_max", "2",
-                    "-analyzeduration", "500000",
-                    "-probesize", "500000",
-                    "-i", &url,
-                    "-c:v", "copy",
-                    "-c:a", "aac",
-                    "-ar", "44100",
-                    "-b:a", "128k",
-                    "-f", "hls",
-                    "-hls_time", "1",
-                    "-hls_list_size", "5",
-                    "-hls_flags", "delete_segments+split_by_time",
-                    "-hls_segment_filename", segment_pattern.to_str().unwrap(),
-                    "-start_number", "0",
-                    playlist_path.to_str().unwrap(),
-                ])
-                .spawn()
-                .map_err(|e| format!("Sidecar spawn failed: {}", e))?
-        }
-        Err(_) => {
-            println!("Sidecar not found, trying system ffmpeg");
-            // Fallback to system ffmpeg
-            let mut cmd = std::process::Command::new("ffmpeg");
-            cmd.args([
-                "-y",
-                "-loglevel", "error",
-                "-fflags", "+genpts+discardcorrupt+nobuffer",
-                "-flags", "low_delay",
-                "-reconnect", "1",
-                "-reconnect_streamed", "1",
-                "-reconnect_delay_max", "2",
-                "-analyzeduration", "500000",
-                "-probesize", "500000",
-                "-i", &url,
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-ar", "44100",
-                "-b:a", "128k",
-                "-f", "hls",
-                "-hls_time", "1",
-                "-hls_list_size", "5",
-                "-hls_flags", "delete_segments+split_by_time",
-                "-hls_segment_filename", segment_pattern.to_str().unwrap(),
-                "-start_number", "0",
-                playlist_path.to_str().unwrap(),
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped());
+    // Use system ffmpeg
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args([
+        "-y",
+        "-loglevel", "error",
+        "-fflags", "+genpts+discardcorrupt+nobuffer",
+        "-flags", "low_delay",
+        "-reconnect", "1",
+        "-reconnect_streamed", "1",
+        "-reconnect_delay_max", "2",
+        "-analyzeduration", "500000",
+        "-probesize", "500000",
+        "-i", &url,
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-ar", "44100",
+        "-b:a", "128k",
+        "-f", "hls",
+        "-hls_time", "1",
+        "-hls_list_size", "5",
+        "-hls_flags", "delete_segments+split_by_time",
+        "-hls_segment_filename", segment_pattern.to_str().unwrap(),
+        "-start_number", "0",
+        playlist_path.to_str().unwrap(),
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::piped());
 
-            let child = cmd.spawn()
-                .map_err(|e| format!("FFmpeg not found: {}. Please install ffmpeg.", e))?;
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
 
-            if let Ok(mut guard) = get_ffmpeg_process().lock() {
-                *guard = Some(child);
-            }
+    let child = cmd.spawn()
+        .map_err(|e| format!("FFmpeg not found: {}. Please install ffmpeg.", e))?;
 
-            // Wait for first segment
-            for i in 0..8 {
-                tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
-                if playlist_path.exists() {
-                    let has_segment = std::fs::read_dir(&hls_path)
-                        .map(|entries| entries.filter_map(|e| e.ok()).any(|e| e.path().extension().map_or(false, |ext| ext == "ts")))
-                        .unwrap_or(false);
-                    if has_segment {
-                        println!("HLS ready after {}ms", (i + 1) * 250);
-                        break;
-                    }
-                }
-            }
+    println!("FFmpeg started with PID: {:?}", child.id());
 
-            return Ok("http://127.0.0.1:9876/hls/stream.m3u8".to_string());
-        }
-    };
+    if let Ok(mut guard) = get_ffmpeg_process().lock() {
+        *guard = Some(child);
+    }
 
-    // Handle sidecar output
-    let (mut rx, _child_handle) = child;
-
-    // Spawn a task to handle output
-    tokio::spawn(async move {
-        use tauri_plugin_shell::process::CommandEvent;
-        while let Some(event) = rx.recv().await {
-            match event {
-                CommandEvent::Stderr(line) => {
-                    println!("ffmpeg: {}", String::from_utf8_lossy(&line));
-                }
-                CommandEvent::Terminated(status) => {
-                    println!("ffmpeg terminated with: {:?}", status);
-                    break;
-                }
-                _ => {}
-            }
-        }
-    });
-
-    // Wait for first segment to be created
-    for i in 0..8 {
+    // Wait for first segment
+    for i in 0..12 {
         tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
         if playlist_path.exists() {
             let has_segment = std::fs::read_dir(&hls_path)
@@ -488,7 +451,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
-        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             fetch_m3u,
             search_subtitles,

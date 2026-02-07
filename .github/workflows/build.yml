@@ -22,15 +22,6 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - run: rustup target add aarch64-apple-darwin
-
-      - name: Download FFmpeg for macOS ARM
-        run: |
-          mkdir -p src-tauri/binaries
-          curl -L "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-darwin-arm64.gz" -o ffmpeg.gz
-          gunzip ffmpeg.gz
-          chmod +x ffmpeg
-          mv ffmpeg src-tauri/binaries/ffmpeg-aarch64-apple-darwin
-
       - run: npm install
       - name: Build
         run: npm run tauri build -- --target aarch64-apple-darwin
@@ -51,15 +42,6 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - run: rustup target add x86_64-apple-darwin
-
-      - name: Download FFmpeg for macOS Intel
-        run: |
-          mkdir -p src-tauri/binaries
-          curl -L "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-darwin-x64.gz" -o ffmpeg.gz
-          gunzip ffmpeg.gz
-          chmod +x ffmpeg
-          mv ffmpeg src-tauri/binaries/ffmpeg-x86_64-apple-darwin
-
       - run: npm install
       - name: Build
         run: npm run tauri build -- --target x86_64-apple-darwin
@@ -77,21 +59,6 @@ jobs:
           node-version: 20
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Download FFmpeg for Windows
-        shell: powershell
-        run: |
-          New-Item -ItemType Directory -Force -Path src-tauri/binaries
-          Invoke-WebRequest -Uri "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-win32-x64.gz" -OutFile ffmpeg.gz
-          # Extract gzip
-          $input = New-Object System.IO.FileStream "ffmpeg.gz", ([IO.FileMode]::Open), ([IO.FileAccess]::Read)
-          $output = New-Object System.IO.FileStream "src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe", ([IO.FileMode]::Create), ([IO.FileAccess]::Write)
-          $gzip = New-Object System.IO.Compression.GzipStream $input, ([IO.Compression.CompressionMode]::Decompress)
-          $gzip.CopyTo($output)
-          $gzip.Close()
-          $input.Close()
-          $output.Close()
-
       - run: npm install
       - name: Build
         run: npm run tauri build
@@ -117,15 +84,6 @@ jobs:
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
-      - name: Download FFmpeg for Linux
-        run: |
-          mkdir -p src-tauri/binaries
-          curl -L "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-linux-x64.gz" -o ffmpeg.gz
-          gunzip ffmpeg.gz
-          chmod +x ffmpeg
-          mv ffmpeg src-tauri/binaries/ffmpeg-x86_64-unknown-linux-gnu
-
       - run: npm install
       - name: Build
         run: npm run tauri build
@@ -161,3 +119,11 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
+          body: |
+            ## IPTV Player
+
+            ### Requirements
+            - **FFmpeg** must be installed on your system
+              - macOS: `brew install ffmpeg`
+              - Windows: Download from https://ffmpeg.org/download.html or `choco install ffmpeg`
+              - Linux: `sudo apt install ffmpeg`
