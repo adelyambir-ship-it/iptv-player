@@ -350,7 +350,7 @@ async fn start_stream(app: AppHandle, url: String) -> Result<String, String> {
     if let Ok(sidecar) = sidecar_result {
         println!("Using bundled FFmpeg");
 
-        let (mut rx, child) = sidecar
+        let (mut rx, _child) = sidecar
             .args(&args)
             .spawn()
             .map_err(|e| format!("Failed to start bundled FFmpeg: {}", e))?;
@@ -484,6 +484,7 @@ async fn stop_stream_internal() -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         let _ = Command::new("taskkill")
             .args(["/F", "/IM", "ffmpeg.exe"])
             .creation_flags(0x08000000)
