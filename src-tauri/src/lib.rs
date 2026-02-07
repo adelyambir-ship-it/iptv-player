@@ -3,6 +3,8 @@ use regex::Regex;
 use std::sync::Mutex;
 use std::process::{Child, Command, Stdio};
 use std::path::PathBuf;
+use tauri::AppHandle;
+use tauri_plugin_shell::ShellExt;
 
 #[derive(Serialize, Clone)]
 struct Channel {
@@ -278,9 +280,37 @@ fn get_hls_path() -> PathBuf {
     }
 }
 
+// FFmpeg arguments
+fn get_ffmpeg_args(url: &str, segment_pattern: &str, playlist_path: &str) -> Vec<String> {
+    vec![
+        "-y".to_string(),
+        "-loglevel".to_string(), "warning".to_string(),
+        "-fflags".to_string(), "+genpts+discardcorrupt".to_string(),
+        "-reconnect".to_string(), "1".to_string(),
+        "-reconnect_streamed".to_string(), "1".to_string(),
+        "-reconnect_delay_max".to_string(), "5".to_string(),
+        "-analyzeduration".to_string(), "2000000".to_string(),
+        "-probesize".to_string(), "2000000".to_string(),
+        "-i".to_string(), url.to_string(),
+        "-c:v".to_string(), "copy".to_string(),
+        "-c:a".to_string(), "aac".to_string(),
+        "-ac".to_string(), "2".to_string(),
+        "-ar".to_string(), "44100".to_string(),
+        "-b:a".to_string(), "128k".to_string(),
+        "-f".to_string(), "hls".to_string(),
+        "-hls_time".to_string(), "2".to_string(),
+        "-hls_list_size".to_string(), "10".to_string(),
+        "-hls_flags".to_string(), "delete_segments+append_list".to_string(),
+        "-hls_segment_type".to_string(), "mpegts".to_string(),
+        "-hls_segment_filename".to_string(), segment_pattern.to_string(),
+        "-start_number".to_string(), "0".to_string(),
+        playlist_path.to_string(),
+    ]
+}
+
 // Start ffmpeg transcoding to HLS
 #[tauri::command]
-async fn start_stream(url: String) -> Result<String, String> {
+async fn start_stream(app: AppHandle, url: String) -> Result<String, String> {
     println!("Starting stream transcoding: {}", url);
 
     // Stop previous ffmpeg first
@@ -308,35 +338,62 @@ async fn start_stream(url: String) -> Result<String, String> {
 
     println!("HLS output: {}", playlist_path.display());
 
-    // Use system ffmpeg with optimized settings
+    let args = get_ffmpeg_args(
+        &url,
+        segment_pattern.to_str().unwrap(),
+        playlist_path.to_str().unwrap()
+    );
+
+    // Try bundled FFmpeg sidecar first
+    let sidecar_result = app.shell().sidecar("ffmpeg");
+
+    if let Ok(sidecar) = sidecar_result {
+        println!("Using bundled FFmpeg");
+
+        let (mut rx, child) = sidecar
+            .args(&args)
+            .spawn()
+            .map_err(|e| format!("Failed to start bundled FFmpeg: {}", e))?;
+
+        // Log output in background
+        tokio::spawn(async move {
+            use tauri_plugin_shell::process::CommandEvent;
+            while let Some(event) = rx.recv().await {
+                match event {
+                    CommandEvent::Stderr(line) => {
+                        let msg = String::from_utf8_lossy(&line);
+                        if !msg.trim().is_empty() {
+                            println!("ffmpeg: {}", msg);
+                        }
+                    }
+                    CommandEvent::Error(e) => {
+                        println!("ffmpeg error: {}", e);
+                    }
+                    CommandEvent::Terminated(status) => {
+                        println!("ffmpeg terminated: {:?}", status);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        println!("FFmpeg sidecar started");
+
+        // Wait for first segment
+        wait_for_segment(&hls_path, &playlist_path).await;
+
+        return Ok("http://127.0.0.1:9876/hls/stream.m3u8".to_string());
+    }
+
+    // Fallback to system FFmpeg
+    println!("Bundled FFmpeg not found, trying system FFmpeg...");
+
     let mut cmd = Command::new("ffmpeg");
-    cmd.args([
-        "-y",
-        "-loglevel", "warning",
-        "-fflags", "+genpts+discardcorrupt",
-        "-reconnect", "1",
-        "-reconnect_streamed", "1",
-        "-reconnect_delay_max", "5",
-        "-analyzeduration", "2000000",
-        "-probesize", "2000000",
-        "-i", &url,
-        "-c:v", "copy",
-        "-c:a", "aac",
-        "-ac", "2",
-        "-ar", "44100",
-        "-b:a", "128k",
-        "-f", "hls",
-        "-hls_time", "2",
-        "-hls_list_size", "10",
-        "-hls_flags", "delete_segments+append_list",
-        "-hls_segment_type", "mpegts",
-        "-hls_segment_filename", segment_pattern.to_str().unwrap(),
-        "-start_number", "0",
-        playlist_path.to_str().unwrap(),
-    ])
-    .stdin(Stdio::null())
-    .stdout(Stdio::null())
-    .stderr(Stdio::piped());
+    cmd.args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
 
     #[cfg(target_os = "windows")]
     {
@@ -347,27 +404,31 @@ async fn start_stream(url: String) -> Result<String, String> {
     let child = cmd.spawn()
         .map_err(|e| format!("FFmpeg not found: {}. Please install ffmpeg.", e))?;
 
-    println!("FFmpeg started with PID: {:?}", child.id());
+    println!("System FFmpeg started with PID: {:?}", child.id());
 
     if let Ok(mut guard) = get_ffmpeg_process().lock() {
         *guard = Some(child);
     }
 
-    // Wait for first segment (longer wait for 2s segments)
+    // Wait for first segment
+    wait_for_segment(&hls_path, &playlist_path).await;
+
+    Ok("http://127.0.0.1:9876/hls/stream.m3u8".to_string())
+}
+
+async fn wait_for_segment(hls_path: &PathBuf, playlist_path: &PathBuf) {
     for i in 0..15 {
         tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
         if playlist_path.exists() {
-            let has_segment = std::fs::read_dir(&hls_path)
+            let has_segment = std::fs::read_dir(hls_path)
                 .map(|entries| entries.filter_map(|e| e.ok()).any(|e| e.path().extension().map_or(false, |ext| ext == "ts")))
                 .unwrap_or(false);
             if has_segment {
-                println!("HLS ready after {}ms", (i + 1) * 250);
+                println!("HLS ready after {}ms", (i + 1) * 300);
                 break;
             }
         }
     }
-
-    Ok("http://127.0.0.1:9876/hls/stream.m3u8".to_string())
 }
 
 // Fixed path HLS server
@@ -416,15 +477,16 @@ async fn stop_stream_internal() -> Result<(), String> {
     // Kill orphaned ffmpeg processes
     #[cfg(unix)]
     {
-        let _ = std::process::Command::new("pkill")
+        let _ = Command::new("pkill")
             .args(["-f", "iptv-hls"])
             .output();
     }
 
     #[cfg(target_os = "windows")]
     {
-        let _ = std::process::Command::new("taskkill")
+        let _ = Command::new("taskkill")
             .args(["/F", "/IM", "ffmpeg.exe"])
+            .creation_flags(0x08000000)
             .output();
     }
 
@@ -452,6 +514,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             fetch_m3u,
             search_subtitles,

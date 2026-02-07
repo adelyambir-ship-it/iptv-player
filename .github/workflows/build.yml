@@ -22,6 +22,15 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - run: rustup target add aarch64-apple-darwin
+
+      - name: Download FFmpeg
+        run: |
+          mkdir -p src-tauri/binaries
+          curl -L "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-darwin-arm64.gz" -o ffmpeg.gz
+          gunzip ffmpeg.gz
+          chmod +x ffmpeg
+          mv ffmpeg src-tauri/binaries/ffmpeg-aarch64-apple-darwin
+
       - run: npm install
       - name: Build
         run: npm run tauri build -- --target aarch64-apple-darwin
@@ -42,6 +51,15 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - run: rustup target add x86_64-apple-darwin
+
+      - name: Download FFmpeg
+        run: |
+          mkdir -p src-tauri/binaries
+          curl -L "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-darwin-x64.gz" -o ffmpeg.gz
+          gunzip ffmpeg.gz
+          chmod +x ffmpeg
+          mv ffmpeg src-tauri/binaries/ffmpeg-x86_64-apple-darwin
+
       - run: npm install
       - name: Build
         run: npm run tauri build -- --target x86_64-apple-darwin
@@ -59,6 +77,20 @@ jobs:
           node-version: 20
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Download FFmpeg
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path src-tauri/binaries
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-win32-x64.gz" -OutFile ffmpeg.gz
+          $input = New-Object System.IO.FileStream "ffmpeg.gz", ([IO.FileMode]::Open)
+          $output = New-Object System.IO.FileStream "src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe", ([IO.FileMode]::Create)
+          $gzip = New-Object System.IO.Compression.GzipStream $input, ([IO.Compression.CompressionMode]::Decompress)
+          $gzip.CopyTo($output)
+          $gzip.Close(); $input.Close(); $output.Close()
+          Write-Host "FFmpeg downloaded and extracted"
+
       - run: npm install
       - name: Build
         run: npm run tauri build
@@ -84,6 +116,15 @@ jobs:
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Download FFmpeg
+        run: |
+          mkdir -p src-tauri/binaries
+          curl -L "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.0/ffmpeg-linux-x64.gz" -o ffmpeg.gz
+          gunzip ffmpeg.gz
+          chmod +x ffmpeg
+          mv ffmpeg src-tauri/binaries/ffmpeg-x86_64-unknown-linux-gnu
+
       - run: npm install
       - name: Build
         run: npm run tauri build
@@ -134,10 +175,7 @@ jobs:
 
       - name: Configure Android TV
         run: |
-          # Add TV features to AndroidManifest
           sed -i 's/<application/<uses-feature android:name="android.software.leanback" android:required="false"\/>\n    <uses-feature android:name="android.hardware.touchscreen" android:required="false"\/>\n    <application android:banner="@mipmap\/ic_launcher"/' src-tauri/gen/android/app/src/main/AndroidManifest.xml
-
-          # Add leanback launcher intent
           sed -i 's/<category android:name="android.intent.category.LAUNCHER"\/>/<category android:name="android.intent.category.LAUNCHER"\/>\n                <category android:name="android.intent.category.LEANBACK_LAUNCHER"\/>/' src-tauri/gen/android/app/src/main/AndroidManifest.xml
 
       - name: Build APK
@@ -178,14 +216,15 @@ jobs:
           prerelease: false
           generate_release_notes: true
           body: |
-            ## IPTV Player
+            ## IPTV Player v1.7.0
 
-            ### Desktop Requirements
-            - **FFmpeg** must be installed on your system
-              - macOS: `brew install ffmpeg`
-              - Windows: Download from https://ffmpeg.org/download.html or `choco install ffmpeg`
-              - Linux: `sudo apt install ffmpeg`
+            ### What's New
+            - FFmpeg is now bundled with the app (no separate installation needed!)
+            - Android TV support with D-pad navigation
+            - Improved streaming stability
 
-            ### Android TV
-            - Install APK directly on your Android TV box
-            - Works with remote control (D-pad navigation)
+            ### Downloads
+            - **Windows**: Use `.exe` (installer) or `.msi`
+            - **macOS**: Use `.dmg` (ARM for M1/M2/M3, Intel for older Macs)
+            - **Linux**: Use `.AppImage` or `.deb`
+            - **Android TV**: Install `.apk` on your TV box
