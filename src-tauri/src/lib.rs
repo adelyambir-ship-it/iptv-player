@@ -1,9 +1,14 @@
 use serde::{Serialize, Deserialize};
 use regex::Regex;
-use std::sync::Mutex;
-use std::process::{Child, Command, Stdio};
-use std::path::PathBuf;
 use tauri::AppHandle;
+
+#[cfg(not(mobile))]
+use std::sync::Mutex;
+#[cfg(not(mobile))]
+use std::process::{Child, Command, Stdio};
+#[cfg(not(mobile))]
+use std::path::PathBuf;
+#[cfg(not(mobile))]
 use tauri_plugin_shell::ShellExt;
 
 #[derive(Serialize, Clone)]
@@ -254,21 +259,26 @@ fn extract_srt_from_zip(data: &[u8]) -> Result<String, String> {
 }
 
 // ==========================================
-// FFmpeg Transcoding + Local HLS Server
+// FFmpeg Transcoding + Local HLS Server (Desktop only)
 // ==========================================
 
+#[cfg(not(mobile))]
 static FFMPEG_PROCESS: std::sync::OnceLock<Mutex<Option<Child>>> = std::sync::OnceLock::new();
+#[cfg(not(mobile))]
 static SERVER_STARTED: std::sync::OnceLock<std::sync::atomic::AtomicBool> = std::sync::OnceLock::new();
 
+#[cfg(not(mobile))]
 fn get_ffmpeg_process() -> &'static Mutex<Option<Child>> {
     FFMPEG_PROCESS.get_or_init(|| Mutex::new(None))
 }
 
+#[cfg(not(mobile))]
 fn is_server_started() -> &'static std::sync::atomic::AtomicBool {
     SERVER_STARTED.get_or_init(|| std::sync::atomic::AtomicBool::new(false))
 }
 
-// Get HLS temp directory (cross-platform)
+// Get HLS temp directory (cross-platform, desktop only)
+#[cfg(not(mobile))]
 fn get_hls_path() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
@@ -280,7 +290,8 @@ fn get_hls_path() -> PathBuf {
     }
 }
 
-// FFmpeg arguments
+// FFmpeg arguments (desktop only)
+#[cfg(not(mobile))]
 fn get_ffmpeg_args(url: &str, segment_pattern: &str, playlist_path: &str) -> Vec<String> {
     vec![
         "-y".to_string(),
@@ -308,114 +319,127 @@ fn get_ffmpeg_args(url: &str, segment_pattern: &str, playlist_path: &str) -> Vec
     ]
 }
 
-// Start ffmpeg transcoding to HLS
+// Start ffmpeg transcoding to HLS (desktop) or direct playback (mobile)
 #[tauri::command]
 async fn start_stream(app: AppHandle, url: String) -> Result<String, String> {
-    println!("Starting stream transcoding: {}", url);
+    println!("Starting stream: {}", url);
 
-    // Stop previous ffmpeg first
-    stop_stream_internal().await?;
-
-    // Use cross-platform temp path
-    let hls_path = get_hls_path();
-    let _ = std::fs::create_dir_all(&hls_path);
-
-    // Clean old files
-    if let Ok(entries) = std::fs::read_dir(&hls_path) {
-        for entry in entries.flatten() {
-            let _ = std::fs::remove_file(entry.path());
-        }
+    // On mobile, skip FFmpeg and return direct URL (native HLS support)
+    #[cfg(mobile)]
+    {
+        let _ = app; // suppress unused warning
+        println!("Mobile platform detected, using direct playback");
+        return Ok(url);
     }
 
-    // Start HLS server if not running
-    start_hls_server_fixed().await;
+    // Desktop: use FFmpeg transcoding
+    #[cfg(not(mobile))]
+    {
+        // Stop previous ffmpeg first
+        stop_stream_internal().await?;
 
-    // Small delay to ensure server is ready
-    tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+        // Use cross-platform temp path
+        let hls_path = get_hls_path();
+        let _ = std::fs::create_dir_all(&hls_path);
 
-    let playlist_path = hls_path.join("stream.m3u8");
-    let segment_pattern = hls_path.join("segment%d.ts");
-
-    println!("HLS output: {}", playlist_path.display());
-
-    let args = get_ffmpeg_args(
-        &url,
-        segment_pattern.to_str().unwrap(),
-        playlist_path.to_str().unwrap()
-    );
-
-    // Try bundled FFmpeg sidecar first
-    let sidecar_result = app.shell().sidecar("ffmpeg");
-
-    if let Ok(sidecar) = sidecar_result {
-        println!("Using bundled FFmpeg");
-
-        let (mut rx, _child) = sidecar
-            .args(&args)
-            .spawn()
-            .map_err(|e| format!("Failed to start bundled FFmpeg: {}", e))?;
-
-        // Log output in background
-        tokio::spawn(async move {
-            use tauri_plugin_shell::process::CommandEvent;
-            while let Some(event) = rx.recv().await {
-                match event {
-                    CommandEvent::Stderr(line) => {
-                        let msg = String::from_utf8_lossy(&line);
-                        if !msg.trim().is_empty() {
-                            println!("ffmpeg: {}", msg);
-                        }
-                    }
-                    CommandEvent::Error(e) => {
-                        println!("ffmpeg error: {}", e);
-                    }
-                    CommandEvent::Terminated(status) => {
-                        println!("ffmpeg terminated: {:?}", status);
-                        break;
-                    }
-                    _ => {}
-                }
+        // Clean old files
+        if let Ok(entries) = std::fs::read_dir(&hls_path) {
+            for entry in entries.flatten() {
+                let _ = std::fs::remove_file(entry.path());
             }
-        });
+        }
 
-        println!("FFmpeg sidecar started");
+        // Start HLS server if not running
+        start_hls_server_fixed().await;
+
+        // Small delay to ensure server is ready
+        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+
+        let playlist_path = hls_path.join("stream.m3u8");
+        let segment_pattern = hls_path.join("segment%d.ts");
+
+        println!("HLS output: {}", playlist_path.display());
+
+        let args = get_ffmpeg_args(
+            &url,
+            segment_pattern.to_str().unwrap(),
+            playlist_path.to_str().unwrap()
+        );
+
+        // Try bundled FFmpeg sidecar first
+        let sidecar_result = app.shell().sidecar("ffmpeg");
+
+        if let Ok(sidecar) = sidecar_result {
+            println!("Using bundled FFmpeg");
+
+            let (mut rx, _child) = sidecar
+                .args(&args)
+                .spawn()
+                .map_err(|e| format!("Failed to start bundled FFmpeg: {}", e))?;
+
+            // Log output in background
+            tokio::spawn(async move {
+                use tauri_plugin_shell::process::CommandEvent;
+                while let Some(event) = rx.recv().await {
+                    match event {
+                        CommandEvent::Stderr(line) => {
+                            let msg = String::from_utf8_lossy(&line);
+                            if !msg.trim().is_empty() {
+                                println!("ffmpeg: {}", msg);
+                            }
+                        }
+                        CommandEvent::Error(e) => {
+                            println!("ffmpeg error: {}", e);
+                        }
+                        CommandEvent::Terminated(status) => {
+                            println!("ffmpeg terminated: {:?}", status);
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            });
+
+            println!("FFmpeg sidecar started");
+
+            // Wait for first segment
+            wait_for_segment(&hls_path, &playlist_path).await;
+
+            return Ok("http://127.0.0.1:9876/hls/stream.m3u8".to_string());
+        }
+
+        // Fallback to system FFmpeg
+        println!("Bundled FFmpeg not found, trying system FFmpeg...");
+
+        let mut cmd = Command::new("ffmpeg");
+        cmd.args(&args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+
+        let child = cmd.spawn()
+            .map_err(|e| format!("FFmpeg not found: {}. Please install ffmpeg.", e))?;
+
+        println!("System FFmpeg started with PID: {:?}", child.id());
+
+        if let Ok(mut guard) = get_ffmpeg_process().lock() {
+            *guard = Some(child);
+        }
 
         // Wait for first segment
         wait_for_segment(&hls_path, &playlist_path).await;
 
-        return Ok("http://127.0.0.1:9876/hls/stream.m3u8".to_string());
+        Ok("http://127.0.0.1:9876/hls/stream.m3u8".to_string())
     }
-
-    // Fallback to system FFmpeg
-    println!("Bundled FFmpeg not found, trying system FFmpeg...");
-
-    let mut cmd = Command::new("ffmpeg");
-    cmd.args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
-
-    let child = cmd.spawn()
-        .map_err(|e| format!("FFmpeg not found: {}. Please install ffmpeg.", e))?;
-
-    println!("System FFmpeg started with PID: {:?}", child.id());
-
-    if let Ok(mut guard) = get_ffmpeg_process().lock() {
-        *guard = Some(child);
-    }
-
-    // Wait for first segment
-    wait_for_segment(&hls_path, &playlist_path).await;
-
-    Ok("http://127.0.0.1:9876/hls/stream.m3u8".to_string())
 }
 
+#[cfg(not(mobile))]
 async fn wait_for_segment(hls_path: &PathBuf, playlist_path: &PathBuf) {
     for i in 0..15 {
         tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
@@ -431,7 +455,8 @@ async fn wait_for_segment(hls_path: &PathBuf, playlist_path: &PathBuf) {
     }
 }
 
-// Fixed path HLS server
+// Fixed path HLS server (desktop only)
+#[cfg(not(mobile))]
 async fn start_hls_server_fixed() {
     use axum::{Router, routing::get_service};
     use tower_http::services::ServeDir;
@@ -464,7 +489,8 @@ async fn start_hls_server_fixed() {
     });
 }
 
-// Internal stop without tauri command
+// Internal stop without tauri command (desktop only)
+#[cfg(not(mobile))]
 async fn stop_stream_internal() -> Result<(), String> {
     // Kill stored process
     if let Ok(mut guard) = get_ffmpeg_process().lock() {
@@ -507,7 +533,14 @@ async fn stop_stream_internal() -> Result<(), String> {
 // Stop ffmpeg - tauri command wrapper
 #[tauri::command]
 async fn stop_stream() -> Result<(), String> {
-    stop_stream_internal().await
+    #[cfg(mobile)]
+    {
+        return Ok(()); // Nothing to stop on mobile
+    }
+    #[cfg(not(mobile))]
+    {
+        stop_stream_internal().await
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

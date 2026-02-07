@@ -168,6 +168,13 @@ jobs:
           rustup target add armv7-linux-androideabi
           rustup target add x86_64-linux-android
 
+      - name: Create FFmpeg placeholders for Android
+        run: |
+          mkdir -p src-tauri/binaries
+          touch src-tauri/binaries/ffmpeg-aarch64-linux-android
+          touch src-tauri/binaries/ffmpeg-armv7-linux-androideabi
+          touch src-tauri/binaries/ffmpeg-x86_64-linux-android
+
       - run: npm install
 
       - name: Initialize Android
