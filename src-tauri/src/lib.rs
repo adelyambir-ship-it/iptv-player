@@ -308,27 +308,28 @@ async fn start_stream(url: String) -> Result<String, String> {
 
     println!("HLS output: {}", playlist_path.display());
 
-    // Use system ffmpeg
+    // Use system ffmpeg with optimized settings
     let mut cmd = Command::new("ffmpeg");
     cmd.args([
         "-y",
-        "-loglevel", "error",
-        "-fflags", "+genpts+discardcorrupt+nobuffer",
-        "-flags", "low_delay",
+        "-loglevel", "warning",
+        "-fflags", "+genpts+discardcorrupt",
         "-reconnect", "1",
         "-reconnect_streamed", "1",
-        "-reconnect_delay_max", "2",
-        "-analyzeduration", "500000",
-        "-probesize", "500000",
+        "-reconnect_delay_max", "5",
+        "-analyzeduration", "2000000",
+        "-probesize", "2000000",
         "-i", &url,
         "-c:v", "copy",
         "-c:a", "aac",
+        "-ac", "2",
         "-ar", "44100",
         "-b:a", "128k",
         "-f", "hls",
-        "-hls_time", "1",
-        "-hls_list_size", "5",
-        "-hls_flags", "delete_segments+split_by_time",
+        "-hls_time", "2",
+        "-hls_list_size", "10",
+        "-hls_flags", "delete_segments+append_list",
+        "-hls_segment_type", "mpegts",
         "-hls_segment_filename", segment_pattern.to_str().unwrap(),
         "-start_number", "0",
         playlist_path.to_str().unwrap(),
@@ -352,9 +353,9 @@ async fn start_stream(url: String) -> Result<String, String> {
         *guard = Some(child);
     }
 
-    // Wait for first segment
-    for i in 0..12 {
-        tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+    // Wait for first segment (longer wait for 2s segments)
+    for i in 0..15 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
         if playlist_path.exists() {
             let has_segment = std::fs::read_dir(&hls_path)
                 .map(|entries| entries.filter_map(|e| e.ok()).any(|e| e.path().extension().map_or(false, |ext| ext == "ts")))

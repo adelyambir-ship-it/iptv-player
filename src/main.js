@@ -356,19 +356,24 @@ async function playVideo(url) {
             }
             hls = new Hls({
                 enableWorker: true,
-                lowLatencyMode: true,
-                backBufferLength: 30,
-                maxBufferLength: 10,
-                maxMaxBufferLength: 30,
-                liveSyncDurationCount: 1,
-                liveMaxLatencyDurationCount: 5,
+                lowLatencyMode: false,
+                backBufferLength: 60,
+                maxBufferLength: 30,
+                maxMaxBufferLength: 60,
+                maxBufferSize: 60 * 1000 * 1000, // 60MB
+                maxBufferHole: 0.5,
+                liveSyncDurationCount: 3,
+                liveMaxLatencyDurationCount: 10,
                 liveDurationInfinity: true,
-                levelLoadingTimeOut: 10000,
-                manifestLoadingTimeOut: 5000,
-                fragLoadingTimeOut: 10000,
-                manifestLoadingMaxRetry: 2,
-                levelLoadingMaxRetry: 2,
-                fragLoadingMaxRetry: 2
+                levelLoadingTimeOut: 20000,
+                manifestLoadingTimeOut: 15000,
+                fragLoadingTimeOut: 30000,
+                manifestLoadingMaxRetry: 4,
+                levelLoadingMaxRetry: 4,
+                fragLoadingMaxRetry: 6,
+                startLevel: -1,
+                autoStartLoad: true,
+                testBandwidth: false
             });
             hls.loadSource(hlsUrl);
             hls.attachMedia(videoPlayer);
@@ -383,9 +388,8 @@ async function playVideo(url) {
                 console.error('HLS error:', data);
                 if (data.fatal) {
                     if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-                        // Try to recover
                         console.log('Attempting to recover from network error...');
-                        hls.startLoad();
+                        setTimeout(() => hls.startLoad(), 1000);
                     } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
                         console.log('Attempting to recover from media error...');
                         hls.recoverMediaError();
@@ -396,8 +400,18 @@ async function playVideo(url) {
                 }
             });
 
-            // Handle buffering
+            // Handle buffering state
             hls.on(Hls.Events.FRAG_BUFFERED, () => {
+                playerOverlay.classList.add('hidden');
+            });
+
+            // Show buffering indicator
+            videoPlayer.addEventListener('waiting', () => {
+                playerOverlay.querySelector('p').textContent = 'Buffering...';
+                playerOverlay.classList.remove('hidden');
+            });
+
+            videoPlayer.addEventListener('playing', () => {
                 playerOverlay.classList.add('hidden');
             });
         } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
