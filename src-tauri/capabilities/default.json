@@ -18,6 +18,12 @@
         { "url": "http://**" },
         { "url": "https://**" }
       ]
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        { "name": "binaries/ffmpeg", "sidecar": true }
+      ]
     }
   ]
 }
