@@ -199,7 +199,7 @@ jobs:
             src-tauri/gen/android/app/build/outputs/apk/**/*.apk
 
   release:
-    needs: [build-macos-arm, build-macos-intel, build-windows, build-linux]
+    needs: [build-macos-arm, build-macos-intel, build-windows, build-linux, build-android]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
