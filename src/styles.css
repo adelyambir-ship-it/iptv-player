@@ -179,6 +179,19 @@ body {
     background: #000;
 }
 
+.player-container:fullscreen,
+.player-container:-webkit-full-screen {
+    max-height: 100vh;
+    width: 100vw;
+    height: 100vh;
+}
+
+.player-container:fullscreen #videoPlayer,
+.player-container:-webkit-full-screen #videoPlayer {
+    width: 100%;
+    height: 100%;
+}
+
 #videoPlayer {
     width: 100%;
     height: 100%;
@@ -414,8 +427,8 @@ body {
     to { transform: rotate(360deg); }
 }
 
-/* Subtitle Button */
-.sub-btn {
+/* Subtitle & Stop Buttons */
+.sub-btn, .stop-btn {
     background: var(--bg-hover);
     border: none;
     font-size: 14px;
@@ -427,7 +440,7 @@ body {
     border-radius: 4px;
 }
 
-.sub-btn:hover {
+.sub-btn:hover, .stop-btn:hover {
     background: var(--primary);
     color: white;
 }
@@ -435,6 +448,84 @@ body {
 .sub-btn.active {
     background: var(--primary);
     color: white;
+}
+
+.stop-btn {
+    font-size: 16px;
+}
+
+.stop-btn:hover {
+    background: #e53935;
+}
+
+.fullscreen-btn {
+    background: var(--bg-hover);
+    border: none;
+    font-size: 18px;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: all 0.2s;
+    padding: 6px 10px;
+    border-radius: 4px;
+}
+
+.fullscreen-btn:hover {
+    background: var(--primary);
+    color: white;
+}
+
+/* Fullscreen mode styles */
+.fullscreen-mode .channels-section {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 120px !important;
+    background: rgba(26, 26, 26, 0.95);
+    border-top: 1px solid var(--border);
+    z-index: 1000;
+}
+
+.fullscreen-mode .channels-list {
+    display: flex;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 8px;
+    gap: 8px;
+}
+
+.fullscreen-mode .channel-card {
+    flex-shrink: 0;
+    width: 150px;
+    flex-direction: column;
+    text-align: center;
+    padding: 8px;
+}
+
+.fullscreen-mode .ch-logo {
+    margin-bottom: 4px;
+}
+
+.fullscreen-mode .ch-info {
+    min-width: 0;
+}
+
+.fullscreen-mode .ch-name {
+    font-size: 12px;
+}
+
+.fullscreen-mode .ch-category {
+    display: none;
+}
+
+.fullscreen-mode .channels-header {
+    padding: 8px 16px;
+}
+
+.fullscreen-mode .player-container {
+    height: calc(100vh - 120px) !important;
+    max-height: calc(100vh - 120px) !important;
 }
 
 /* Subtitle Display */

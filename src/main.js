@@ -59,6 +59,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     favBtn.addEventListener('click', toggleCurrentFavorite);
 
+    // Stop button
+    document.getElementById('stopBtn').addEventListener('click', stopStream);
+
+    // Fullscreen button
+    document.getElementById('fullscreenBtn').addEventListener('click', toggleFullscreen);
+
+    // Double-click video for fullscreen
+    document.getElementById('playerContainer').addEventListener('dblclick', toggleFullscreen);
+
     // Category clicks
     document.getElementById('categories').addEventListener('click', (e) => {
         const item = e.target.closest('.category-item');
@@ -312,38 +321,176 @@ function playChannel(channel) {
     playVideo(channel.url);
 }
 
-// Play video with HLS.js
-function playVideo(url) {
+// Play video with ffmpeg transcoding (embedded in app)
+async function playVideo(url) {
+    console.log('Starting stream:', url);
+
+    // First, stop any existing stream
     if (hls) {
         hls.destroy();
         hls = null;
     }
+    videoPlayer.src = '';
+    videoPlayer.load();
 
-    if (url.includes('.m3u8') || url.includes('m3u8')) {
-        if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+    // Show loading
+    playerOverlay.classList.remove('hidden');
+    playerOverlay.querySelector('p').textContent = 'Stream hazirlaniyor...';
+
+    try {
+        const invoke = window.__TAURI__?.core?.invoke;
+
+        // Stop previous stream first
+        await invoke('stop_stream');
+
+        // Start ffmpeg transcoding
+        const hlsUrl = await invoke('start_stream', { url });
+        console.log('HLS URL:', hlsUrl);
+
+        playerOverlay.querySelector('p').textContent = 'Baglaniyor...';
+
+        // Play with HLS.js
+        if (Hls.isSupported()) {
+            if (hls) {
+                hls.destroy();
+            }
             hls = new Hls({
                 enableWorker: true,
-                lowLatencyMode: true
+                lowLatencyMode: true,
+                backBufferLength: 30,
+                maxBufferLength: 10,
+                maxMaxBufferLength: 30,
+                liveSyncDurationCount: 1,
+                liveMaxLatencyDurationCount: 5,
+                liveDurationInfinity: true,
+                levelLoadingTimeOut: 10000,
+                manifestLoadingTimeOut: 5000,
+                fragLoadingTimeOut: 10000,
+                manifestLoadingMaxRetry: 2,
+                levelLoadingMaxRetry: 2,
+                fragLoadingMaxRetry: 2
             });
-            hls.loadSource(url);
+            hls.loadSource(hlsUrl);
             hls.attachMedia(videoPlayer);
+
             hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                videoPlayer.play().catch(() => {});
+                console.log('HLS manifest parsed, playing...');
+                playerOverlay.classList.add('hidden');
+                videoPlayer.play();
             });
+
             hls.on(Hls.Events.ERROR, (event, data) => {
                 console.error('HLS error:', data);
                 if (data.fatal) {
-                    playerOverlay.classList.remove('hidden');
-                    playerOverlay.querySelector('p').textContent = 'Kanal yuklenemedi';
+                    if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                        // Try to recover
+                        console.log('Attempting to recover from network error...');
+                        hls.startLoad();
+                    } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                        console.log('Attempting to recover from media error...');
+                        hls.recoverMediaError();
+                    } else {
+                        playerOverlay.classList.remove('hidden');
+                        playerOverlay.querySelector('p').textContent = 'Oynatma hatasi - tekrar deneyin';
+                    }
                 }
             });
+
+            // Handle buffering
+            hls.on(Hls.Events.FRAG_BUFFERED, () => {
+                playerOverlay.classList.add('hidden');
+            });
         } else if (videoPlayer.canPlayType('application/vnd.apple.mpegurl')) {
-            videoPlayer.src = url;
-            videoPlayer.play().catch(() => {});
+            // Native HLS support (Safari)
+            videoPlayer.src = hlsUrl;
+            videoPlayer.addEventListener('loadedmetadata', () => {
+                playerOverlay.classList.add('hidden');
+                videoPlayer.play();
+            });
         }
-    } else {
-        videoPlayer.src = url;
-        videoPlayer.play().catch(() => {});
+    } catch (err) {
+        console.error('Stream error:', err);
+        playerOverlay.classList.remove('hidden');
+        playerOverlay.querySelector('p').textContent = 'Hata: ' + err.toString();
+    }
+}
+
+// Toggle fullscreen - use Tauri window API for true fullscreen
+let isInFullscreen = false;
+
+async function toggleFullscreen() {
+    try {
+        const win = window.__TAURI__?.window;
+        if (win && win.getCurrentWindow) {
+            const currentWin = win.getCurrentWindow();
+
+            if (!isInFullscreen) {
+                // Enter fullscreen
+                await currentWin.setFullscreen(true);
+                isInFullscreen = true;
+                document.body.classList.add('fullscreen-mode');
+
+                // Hide sidebar, keep channels at bottom
+                document.querySelector('.sidebar').style.display = 'none';
+                document.querySelector('.now-playing').style.display = 'none';
+                document.querySelector('.player-container').style.maxHeight = 'calc(100vh - 120px)';
+                document.querySelector('.player-section').style.flex = '1';
+                document.querySelector('.channels-section').style.height = '120px';
+                document.querySelector('.channels-section').style.flex = 'none';
+            } else {
+                // Exit fullscreen
+                await currentWin.setFullscreen(false);
+                isInFullscreen = false;
+                document.body.classList.remove('fullscreen-mode');
+
+                // Restore UI
+                document.querySelector('.sidebar').style.display = '';
+                document.querySelector('.now-playing').style.display = '';
+                document.querySelector('.player-container').style.maxHeight = '';
+                document.querySelector('.player-section').style.flex = '';
+                document.querySelector('.channels-section').style.height = '';
+                document.querySelector('.channels-section').style.flex = '';
+            }
+            return;
+        }
+    } catch (e) {
+        console.log('Tauri fullscreen error:', e);
+    }
+
+    // Fallback to HTML5 Fullscreen API
+    const video = document.getElementById('videoPlayer');
+    if (video.requestFullscreen) {
+        video.requestFullscreen().catch(console.log);
+    } else if (video.webkitEnterFullscreen) {
+        video.webkitEnterFullscreen();
+    }
+}
+
+// Handle ESC key to exit fullscreen
+document.addEventListener('keydown', async (e) => {
+    if (e.key === 'Escape' && isInFullscreen) {
+        await toggleFullscreen();
+    }
+});
+
+
+// Stop stream
+async function stopStream() {
+    try {
+        if (hls) {
+            hls.destroy();
+            hls = null;
+        }
+        videoPlayer.src = '';
+        videoPlayer.load();
+
+        const invoke = window.__TAURI__?.core?.invoke;
+        await invoke('stop_stream');
+
+        playerOverlay.classList.remove('hidden');
+        playerOverlay.querySelector('p').textContent = 'Kanal secin';
+    } catch (err) {
+        console.error('Stop error:', err);
     }
 }
 

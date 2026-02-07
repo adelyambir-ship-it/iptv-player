@@ -27,4 +27,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 regex = "1.12.3"
 zip = "7.3.0"
 urlencoding = "2.1.3"
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+tower-http = { version = "0.5", features = ["cors", "fs"] }
+tempfile = "3"
 

@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-macos-arm:
     runs-on: macos-latest
@@ -55,10 +58,7 @@ jobs:
         with:
           node-version: 20
       - name: Install Rust
-        run: |
-          Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
-          .\rustup-init.exe -y
-          echo "$env:USERPROFILE\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+        uses: dtolnay/rust-action@stable
       - run: npm install
       - name: Build
         run: npm run tauri build
@@ -93,3 +93,29 @@ jobs:
           path: |
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
+
+  release:
+    needs: [build-macos-arm, build-macos-intel, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure
+        run: ls -R artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.msi
+            artifacts/**/*.exe
+            artifacts/**/*.deb
+            artifacts/**/*.AppImage
+          draft: false
+          prerelease: false
+          generate_release_notes: true

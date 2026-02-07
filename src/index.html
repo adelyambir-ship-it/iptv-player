@@ -43,7 +43,7 @@
             <!-- Video Player -->
             <div class="player-section">
                 <div class="player-container" id="playerContainer">
-                    <video id="videoPlayer" controls></video>
+                    <video id="videoPlayer" controls playsinline webkit-playsinline></video>
                     <div class="player-overlay" id="playerOverlay">
                         <div class="play-icon">▶</div>
                         <p>Kanal secin</p>
@@ -54,6 +54,8 @@
                     <span class="channel-logo" id="currentLogo"></span>
                     <span class="channel-title" id="currentTitle">Kanal seciniz</span>
                     <button class="sub-btn" id="subBtn" title="Altyazi Ara">CC</button>
+                    <button class="stop-btn" id="stopBtn" title="Durdur">⏹</button>
+                    <button class="fullscreen-btn" id="fullscreenBtn" title="Tam Ekran">⛶</button>
                     <button class="fav-btn" id="favBtn" title="Favorilere Ekle">☆</button>
                 </div>
             </div>
